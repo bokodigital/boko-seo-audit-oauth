@@ -1,0 +1,39 @@
+import { NextResponse } from "next/server";
+import { checkApp } from "@/lib/auth";
+import { oauthConfigured, refreshAccessToken } from "@/lib/google";
+import { getSession } from "@/lib/gsession";
+import { gscReport, listSites } from "@/lib/gsc";
+import { resolveRange } from "@/lib/dates";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
+export async function GET(request) {
+  if (!checkApp(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const s = getSession(request);
+  if (!s || !s.refresh_token) return NextResponse.json({ configured: oauthConfigured(), connected: false, sites: [] });
+  try {
+    const token = await refreshAccessToken(s.refresh_token);
+    const sites = await listSites(token);
+    return NextResponse.json({ configured: true, connected: true, sites });
+  } catch (e) {
+    return NextResponse.json({ configured: true, connected: true, sites: [], error: e.message || String(e) }, { status: 502 });
+  }
+}
+
+export async function POST(request) {
+  if (!checkApp(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const s = getSession(request);
+  if (!s || !s.refresh_token) return NextResponse.json({ error: "Not connected to Google." }, { status: 401 });
+  let body;
+  try { body = await request.json(); } catch (e) { return NextResponse.json({ error: "Invalid body" }, { status: 400 }); }
+  if (!body.siteUrl) return NextResponse.json({ error: "siteUrl required" }, { status: 400 });
+  try {
+    const token = await refreshAccessToken(s.refresh_token);
+    const range = resolveRange(body.start, body.end);
+    const data = await gscReport(token, body.siteUrl, range);
+    return NextResponse.json(data);
+  } catch (e) {
+    return NextResponse.json({ error: e.message || String(e) }, { status: 502 });
+  }
+}
